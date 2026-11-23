@@ -139,8 +139,7 @@
               "invented_tokens": 1,
               "kept_masked": 2,
               "role": "support_agent",
-              "unmasked": 4,
-              "reason": "none"
+              "unmasked": 4
             },
             "hash": "7442c87db96c854900943586c173a645cb17d288777afc5c452db78c2908ddbe",
             "prev": "6a7eb99abbb7a8ea809951fcb91fd0db687bfa74bdfac6a3a2c064dd1e976160",
