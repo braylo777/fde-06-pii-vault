@@ -1,0 +1,26 @@
+[package]
+name = "fde-06-pii-vault"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Find PII, swap it for deterministic tokens before the LLM sees it, unmask only for allowed roles, and log every step in a tamper-evident chain."
+repository = "https://github.com/braylo-ai/fde-06-pii-vault"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "fde-06-pii-vault"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.10.9"
+hmac = "=0.12.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1

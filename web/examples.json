@@ -1,0 +1,154 @@
+{
+  "stage": 6,
+  "repo": "fde-06-pii-vault",
+  "title": "PII Cryptography & Guardrails",
+  "tagline": "Find personal data, swap it for deterministic tokens before the model sees it, unmask only what a role may see, and keep a tamper-evident log of every step.",
+  "why": "Legal will not sign off on an LLM project until they know where customer PII goes. The answer that works: the model never sees raw PII. Values are swapped for keyed tokens on the way in, the output is checked on the way out, and only the roles that need a value get it back. Card numbers that must stay in legacy systems are encrypted without changing their format, and the audit log can prove nobody edited it.",
+  "covers": [
+    "Detectors with validation: email, phone, SSN rules, cards (Luhn), IBAN (mod-97), IPv4, rule-based person names (titles + first-name list)",
+    "Deterministic tokens: HMAC-SHA256 per tenant key, value normalization, so the same customer gets the same token across documents",
+    "Proxy: pre-flight mask, post-flight block on raw PII, detection of tokens the model invented, unmask per role",
+    "Format-preserving encryption for digit strings (FF1-style Feistel), keep-last-4, separators kept",
+    "Hash-chained audit log with tamper, delete, reorder and truncation (anchored head) detection"
+  ],
+  "gaps": [
+    "Person-name NER is rule-based, not a trained model: plug in spaCy / Presidio for production recall",
+    "The FPE is FF1-shaped but uses HMAC, not AES; it is not NIST SP 800-38G validated",
+    "No key management: keys are inputs here; use a KMS / HSM and rotate per tenant",
+    "No real LLM call: model_output is given, so the demo runs offline"
+  ],
+  "ops": [
+    {
+      "op": "detect",
+      "label": "Detect PII",
+      "help": "Validated detectors: the second card number fails Luhn and the order number is ignored, so neither is flagged.",
+      "input": {
+        "text": "Hi, this is Dr. Ana Souza. Reach me at ana.souza@clinic.org or 020 7946 0958. Pay to IBAN GB82 WEST 1234 5698 7654 32. My SSN is 123-45-6789, card 5555 5555 5555 4444 (old card 5555 5555 5555 4445). Order 99812, server 10.20.1.7.",
+        "known_first_names": []
+      }
+    },
+    {
+      "op": "tokenize",
+      "label": "Tokenize",
+      "help": "Each value becomes a keyed token. Change the tenant_key and every token changes; run it twice and they stay the same.",
+      "input": {
+        "tenant_key": "tenant-acme-demo-key-2026",
+        "text": "Customer Maria Lopez (maria.lopez@acme-foods.com, +1 (415) 555-0132) disputes a charge on card 4111 1111 1111 1111. Draft a reply and tell support what to check.",
+        "known_first_names": [
+          "maria"
+        ]
+      }
+    },
+    {
+      "op": "proxy",
+      "label": "Unmask proxy",
+      "help": "The model saw only tokens. A support agent gets the name, email and phone back, but the card stays hidden, and the model's invented token becomes [unknown]. Switch role to fraud_analyst or bi_dashboard.",
+      "input": {
+        "tenant_key": "tenant-acme-demo-key-2026",
+        "prompt": "Customer Maria Lopez (maria.lopez@acme-foods.com, +1 (415) 555-0132) disputes a charge on card 4111 1111 1111 1111. Draft a reply and tell support what to check.",
+        "role": "support_agent",
+        "unmask_policy": {
+          "support_agent": [
+            "PERSON",
+            "EMAIL",
+            "PHONE"
+          ],
+          "fraud_analyst": [
+            "CARD"
+          ],
+          "bi_dashboard": []
+        },
+        "model_output": "Reply to <<EMAIL_9f53e85a75b9>>: Hi <<PERSON_7661f8b0f595>>, we are reviewing the charge on your card <<CARD_03ac6f4c9cc8>> and will call you at <<PHONE_e03673bb984a>> within 2 days. Support: check the last 3 transactions on <<CARD_03ac6f4c9cc8>> and the dispute history for <<EMAIL_9f53e85a75b9>>. Also notify <<EMAIL_000000000000>>.",
+        "known_first_names": [
+          "maria"
+        ]
+      }
+    },
+    {
+      "op": "proxy",
+      "label": "Block a leak",
+      "help": "The model output contains a raw email it never saw in the prompt. The proxy blocks the whole response.",
+      "input": {
+        "tenant_key": "tenant-acme-demo-key-2026",
+        "prompt": "Customer Maria Lopez (maria.lopez@acme-foods.com, +1 (415) 555-0132) disputes a charge on card 4111 1111 1111 1111. Draft a reply and tell support what to check.",
+        "role": "support_agent",
+        "unmask_policy": {
+          "support_agent": [
+            "PERSON",
+            "EMAIL",
+            "PHONE"
+          ],
+          "fraud_analyst": [
+            "CARD"
+          ],
+          "bi_dashboard": []
+        },
+        "model_output": "Sure. I also cc'd jane.roe@gmail.com on this.",
+        "known_first_names": [
+          "maria"
+        ]
+      }
+    },
+    {
+      "op": "fpe_encrypt",
+      "label": "FPE encrypt",
+      "help": "The card stays 16 digits with dashes and keeps its last 4, so it still fits the legacy column and the receipt UI.",
+      "input": {
+        "key": "fpe-demo-key-0123456789",
+        "tweak": "acme/cards",
+        "value": "4111-1111-1111-1234",
+        "keep_last": 4
+      }
+    },
+    {
+      "op": "fpe_decrypt",
+      "label": "FPE decrypt",
+      "help": "Same key and tweak reverse it. A different tweak gives a different, wrong result.",
+      "input": {
+        "key": "fpe-demo-key-0123456789",
+        "tweak": "acme/cards",
+        "value": "0670-2661-0754-1234",
+        "keep_last": 4
+      }
+    },
+    {
+      "op": "audit_verify",
+      "label": "Verify audit log",
+      "help": "This is the proxy's audit log with one field edited after the fact. Verification names the entry. Undo the edit (entities back to 4) to see valid: true.",
+      "input": {
+        "entries": [
+          {
+            "event": {
+              "entities": 0,
+              "event": "preflight_mask",
+              "kinds": [
+                "PERSON",
+                "EMAIL",
+                "PHONE",
+                "CARD"
+              ],
+              "role": "support_agent"
+            },
+            "hash": "6a7eb99abbb7a8ea809951fcb91fd0db687bfa74bdfac6a3a2c064dd1e976160",
+            "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+            "seq": 0
+          },
+          {
+            "event": {
+              "event": "postflight_unmask",
+              "invented_tokens": 1,
+              "kept_masked": 2,
+              "role": "support_agent",
+              "unmasked": 4,
+              "reason": "none"
+            },
+            "hash": "7442c87db96c854900943586c173a645cb17d288777afc5c452db78c2908ddbe",
+            "prev": "6a7eb99abbb7a8ea809951fcb91fd0db687bfa74bdfac6a3a2c064dd1e976160",
+            "seq": 1
+          }
+        ],
+        "expected_head": "7442c87db96c854900943586c173a645cb17d288777afc5c452db78c2908ddbe"
+      }
+    }
+  ]
+}
