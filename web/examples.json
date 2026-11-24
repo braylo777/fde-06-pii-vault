@@ -149,5 +149,9 @@
         "expected_head": "7442c87db96c854900943586c173a645cb17d288777afc5c452db78c2908ddbe"
       }
     }
-  ]
+  ],
+  "project": {
+    "n": 6,
+    "title": "Deterministic PII Unmasking Proxy"
+  }
 }
